@@ -1,26 +1,31 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from predictor import get_prediction, handle_result, get_level, reset_level
+from predictor import get_prediction, handle_result, get_level, reset_level, SEQUENCE
 import json
 import os
 import re
 from PIL import Image
 import pytesseract
 import io
+import uuid
 
 app = Flask(__name__)
 CORS(app)
 
-HISTORY_FILE = 'history.json'
+# ---------- HISTORY HANDLER ----------
+def get_history_file(user_id, game):
+    return f'history_{user_id}_{game}.json'
 
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, 'r') as f:
+def load_history(user_id, game):
+    file = get_history_file(user_id, game)
+    if os.path.exists(file):
+        with open(file, 'r') as f:
             return json.load(f)
     return []
 
-def save_history(history):
-    with open(HISTORY_FILE, 'w') as f:
+def save_history(user_id, game, history):
+    file = get_history_file(user_id, game)
+    with open(file, 'w') as f:
         json.dump(history, f, indent=2)
 
 @app.route('/')
@@ -32,8 +37,11 @@ def predict():
     data = request.get_json()
     game = data.get('game', '30S')
     period = data.get('period', '')
+    user_id = data.get('user_id', 'default')
     result = get_prediction(game)
     result['period'] = period
+    result['user_id'] = user_id
+    result['game'] = game
     return jsonify(result)
 
 @app.route('/result', methods=['POST'])
@@ -42,10 +50,12 @@ def result():
     period = data.get('period', '')
     prediction = data.get('prediction', '')
     is_win = data.get('win', False)
+    game = data.get('game', '30S')
+    user_id = data.get('user_id', 'default')
     
-    handle_result(is_win)
+    handle_result(is_win, game)
     
-    history = load_history()
+    history = load_history(user_id, game)
     history.append({
         'period': period,
         'prediction': prediction,
@@ -53,7 +63,7 @@ def result():
     })
     if len(history) > 50:
         history = history[-50:]
-    save_history(history)
+    save_history(user_id, game, history)
     
     try:
         next_period = str(int(period) + 1)
@@ -62,23 +72,25 @@ def result():
     
     return jsonify({
         'status': 'ok',
-        'level': get_level() + 1,
+        'level': get_level(game) + 1,
         'history': history,
         'next_period': next_period
     })
 
-@app.route('/history', methods=['GET'])
+@app.route('/history', methods=['POST'])
 def history():
-    return jsonify(load_history())
+    data = request.get_json()
+    user_id = data.get('user_id', 'default')
+    game = data.get('game', '30S')
+    history = load_history(user_id, game)
+    return jsonify(history)
 
 @app.route('/reset', methods=['POST'])
 def reset():
-    reset_level()
+    data = request.get_json()
+    game = data.get('game', '30S')
+    reset_level(game)
     return jsonify({'status': 'reset done'})
-
-@app.route('/level', methods=['GET'])
-def level():
-    return jsonify({'level': get_level() + 1})
 
 @app.route('/upload', methods=['POST'])
 def upload():
